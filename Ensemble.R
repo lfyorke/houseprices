@@ -202,3 +202,48 @@ gbm_mdl <- do.call(caret::train,
 cv_y <- do.call(c,lapply(gbm_set,function(x){x$predictions$y}))
 cv_yhat <- do.call(c,lapply(gbm_set,function(x){x$predictions$yhat}))
 rmse(cv_y,cv_yhat)
+
+# xgboost model
+
+# set caret training parameters
+CARET.TRAIN.PARMS <- list(method="xgbTree")   
+
+CARET.TUNE.GRID <-  expand.grid(nrounds=800, 
+                                max_depth=10, 
+                                eta=0.03, 
+                                gamma=0.1, 
+                                colsample_bytree=0.4, 
+                                min_child_weight=1,
+                                subsample = 1)
+
+
+
+MODEL.SPECIFIC.PARMS <- list(verbose=0) #NULL # Other model specific parameters
+
+# model specific training parameter
+CARET.TRAIN.CTRL <- trainControl(method="none",
+                                 verboseIter=FALSE,
+                                 classProbs=FALSE)
+
+CARET.TRAIN.OTHER.PARMS <- list(trControl=CARET.TRAIN.CTRL,
+                                tuneGrid=CARET.TUNE.GRID,
+                                metric="RMSE")
+
+
+
+# generate Level 1 features
+xgb_set <- llply(data_folds,train_one_fold,L0FeatureSet2)
+
+# final model fit
+xgb_mdl <- do.call(caret::train,
+                   c(list(x=L0FeatureSet2$train$predictors,y=L0FeatureSet2$train$y),
+                     CARET.TRAIN.PARMS,
+                     MODEL.SPECIFIC.PARMS,
+                     CARET.TRAIN.OTHER.PARMS))
+
+# CV Error Estimate
+cv_y <- do.call(c,lapply(xgb_set,function(x){x$predictions$y}))
+cv_yhat <- do.call(c,lapply(xgb_set,function(x){x$predictions$yhat}))
+rmse(cv_y,cv_yhat)
+
+cat("Average CV rmse:",mean(do.call(c,lapply(xgb_set,function(x){x$score}))))
