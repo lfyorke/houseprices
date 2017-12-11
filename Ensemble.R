@@ -203,6 +203,9 @@ cv_y <- do.call(c,lapply(gbm_set,function(x){x$predictions$y}))
 cv_yhat <- do.call(c,lapply(gbm_set,function(x){x$predictions$yhat}))
 rmse(cv_y,cv_yhat)
 
+test_gbm_yhat <- predict(gbm_mdl,newdata = L0FeatureSet1$test$predictors,type = "raw")
+gbm_submission <- cbind(Id=L0FeatureSet1$test$id,SalePrice=exp(test_gbm_yhat))
+
 # xgboost model
 
 # set caret training parameters
@@ -247,3 +250,101 @@ cv_yhat <- do.call(c,lapply(xgb_set,function(x){x$predictions$yhat}))
 rmse(cv_y,cv_yhat)
 
 cat("Average CV rmse:",mean(do.call(c,lapply(xgb_set,function(x){x$score}))))
+
+
+test_xgb_yhat <- predict(xgb_mdl,newdata = L0FeatureSet2$test$predictors,type = "raw")
+xgb_submission <- cbind(Id=L0FeatureSet2$test$id,SalePrice=exp(test_xgb_yhat))
+
+# ranger model
+
+# set caret training parameters
+CARET.TRAIN.PARMS <- list(method="ranger")   
+
+CARET.TUNE.GRID <-  expand.grid(mtry=2*as.integer(sqrt(ncol(L0FeatureSet1$train$predictors))), splitrule="variance")
+
+MODEL.SPECIFIC.PARMS <- list(verbose=0,num.trees=500) #NULL # Other model specific parameters
+
+# model specific training parameter
+CARET.TRAIN.CTRL <- trainControl(method="none",
+                                 verboseIter=FALSE,
+                                 classProbs=FALSE)
+
+CARET.TRAIN.OTHER.PARMS <- list(trControl=CARET.TRAIN.CTRL,
+                                tuneGrid=CARET.TUNE.GRID,
+                                metric="RMSE")
+
+
+# generate Level 1 features
+rngr_set <- llply(data_folds,train_one_fold,L0FeatureSet1)
+
+# final model fit
+rngr_mdl <- do.call(caret::train,
+                    c(list(x=L0FeatureSet1$train$predictors,y=L0FeatureSet1$train$y),
+                      CARET.TRAIN.PARMS,
+                      MODEL.SPECIFIC.PARMS,
+                      CARET.TRAIN.OTHER.PARMS))
+
+# CV Error Estimate
+cv_y <- do.call(c,lapply(rngr_set,function(x){x$predictions$y}))
+cv_yhat <- do.call(c,lapply(rngr_set,function(x){x$predictions$yhat}))
+rmse(cv_y,cv_yhat)
+
+
+cat("Average CV rmse:",mean(do.call(c,lapply(rngr_set,function(x){x$score}))))
+
+test_rngr_yhat <- predict(rngr_mdl,newdata = L0FeatureSet1$test$predictors,type = "raw")
+rngr_submission <- cbind(Id=L0FeatureSet1$test$id,SalePrice=exp(test_rngr_yhat))
+
+
+#create predictions for use in nn
+
+gbm_yhat <- do.call(c,lapply(gbm_set,function(x){x$predictions$yhat}))
+xgb_yhat <- do.call(c,lapply(xgb_set,function(x){x$predictions$yhat}))
+rngr_yhat <- do.call(c,lapply(rngr_set,function(x){x$predictions$yhat}))
+
+# create Feature Set
+L1FeatureSet <- list()
+
+L1FeatureSet$train$id <- do.call(c,lapply(gbm_set,function(x){x$predictions$ID}))
+L1FeatureSet$train$y <- do.call(c,lapply(gbm_set,function(x){x$predictions$y}))
+predictors <- data.frame(gbm_yhat,xgb_yhat,rngr_yhat)
+predictors_rank <- t(apply(predictors,1,rank))
+colnames(predictors_rank) <- paste0("rank_",names(predictors))
+L1FeatureSet$train$predictors <- predictors 
+
+L1FeatureSet$test$id <- gbm_submission[,"Id"]
+L1FeatureSet$test$predictors <- data.frame(gbm_yhat=test_gbm_yhat,
+                                           xgb_yhat=test_xgb_yhat,
+                                           rngr_yhat=test_rngr_yhat)
+
+
+
+# set caret training parameters
+CARET.TRAIN.PARMS <- list(method="nnet") 
+
+CARET.TUNE.GRID <-  NULL  # NULL provides model specific default tuning parameters
+
+# model specific training parameter
+CARET.TRAIN.CTRL <- trainControl(method="repeatedcv",
+                                 number=5,
+                                 repeats=1,
+                                 verboseIter=FALSE)
+
+CARET.TRAIN.OTHER.PARMS <- list(trControl=CARET.TRAIN.CTRL,
+                                maximize=FALSE,
+                                tuneGrid=CARET.TUNE.GRID,
+                                tuneLength=7,
+                                metric="RMSE")
+
+MODEL.SPECIFIC.PARMS <- list(verbose=FALSE,linout=TRUE,trace=FALSE) #NULL # Other model specific parameters
+
+
+set.seed(825)
+l1_nnet_mdl <- do.call(caret::train,c(list(x=L1FeatureSet$train$predictors,y=L1FeatureSet$train$y),
+                               CARET.TRAIN.PARMS,
+                               MODEL.SPECIFIC.PARMS,
+                               CARET.TRAIN.OTHER.PARMS))
+
+l1_nnet_mdl
+
+cat("Average CV rmse:",mean(l1_nnet_mdl$resample$RMSE),"\n")
